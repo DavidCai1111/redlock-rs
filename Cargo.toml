@@ -1,0 +1,9 @@
+[package]
+name = "redlock"
+version = "0.1.0"
+authors = ["David Cai <davidcai1993@yahoo.com>"]
+
+[dependencies]
+lazy_static = "0.2"
+redis = "0.5.3"
+quick-error = "1.2"
