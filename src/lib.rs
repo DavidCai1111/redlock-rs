@@ -3,6 +3,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate quick_error;
 extern crate redis;
+extern crate rand;
 
 use self::errors::*;
 use self::scripts::*;

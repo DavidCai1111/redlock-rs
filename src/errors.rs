@@ -6,8 +6,10 @@ quick_error!{
   #[derive(Debug)]
   pub enum RedlockError {
     RedisError(err: redis::RedisError) {
-      // display("[redlock] Redis error: {}", err)
       from(err: redis::RedisError) -> (err)
+    }
+    NoServerError {
+      description("Redlock must be initialized with at least one redis server")
     }
   }
 }

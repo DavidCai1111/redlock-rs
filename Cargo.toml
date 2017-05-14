@@ -7,3 +7,5 @@ authors = ["David Cai <davidcai1993@yahoo.com>"]
 lazy_static = "0.2"
 redis = "0.5.3"
 quick-error = "1.2"
+rand = "0.3.15"
+futures = "0.1"
