@@ -1,9 +1,8 @@
 use std::time;
 use std::default::Default;
 use redis;
-use chrono;
+use time as libtime;
 use scripts;
-use futures_cpupool::CpuPool;
 use errors::{RedlockResult, RedlockError};
 use util;
 
@@ -65,10 +64,8 @@ impl Redlock {
         let mut waitings = clients_clen;
         let mut votes = 0;
 
-        let ttl_ms = chrono::Duration::from_std(ttl)?.num_milliseconds();
+        let ttl_ms = libtime::Duration::from_std(ttl)?.num_milliseconds();
         let quorum = (clients_clen as f64 / 2_f64).floor() as usize + 1;
-
-        let pool = CpuPool::new(clients_clen);
 
         for i in 0..clients_clen {
             let conn = &self.clients[i].get_connection()?;

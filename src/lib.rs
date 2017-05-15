@@ -4,8 +4,6 @@ extern crate lazy_static;
 extern crate quick_error;
 extern crate redis;
 extern crate rand;
-extern crate futures_cpupool;
-extern crate chrono;
 extern crate time;
 
 use self::errors::*;
