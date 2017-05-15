@@ -1,7 +1,7 @@
 use std::time;
 use std::default::Default;
+use time as lib_time;
 use redis;
-use time as libtime;
 use scripts;
 use errors::{RedlockResult, RedlockError};
 use util;
@@ -17,6 +17,12 @@ pub struct Lock<'a> {
     resource_name: String,
     value: String,
     ttl: time::Duration,
+}
+
+impl<'a> Lock<'a> {
+    pub fn unlock(&self) -> RedlockResult<()> {
+        unimplemented!()
+    }
 }
 
 #[derive(Debug)]
@@ -60,38 +66,38 @@ impl Redlock {
     }
 
     pub fn lock(&self, resource_name: &str, ttl: time::Duration) -> RedlockResult<Lock> {
-        let clients_clen = self.clients.len();
-        let mut waitings = clients_clen;
-        let mut votes = 0;
+        let clients_len = self.clients.len();
+        let ttl = lib_time::Duration::from_std(ttl)?;
+        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
 
-        let ttl_ms = libtime::Duration::from_std(ttl)?.num_milliseconds();
-        let quorum = (clients_clen as f64 / 2_f64).floor() as usize + 1;
+        let mut waitings = clients_len;
+        let start = lib_time::now();
 
-        for i in 0..clients_clen {
-            let conn = &self.clients[i].get_connection()?;
+        for (votes, client) in self.clients.iter().enumerate() {
             let value: &str = &util::get_random_string(32);
 
-            match LOCK.arg(resource_name)
-                      .arg(value)
-                      .arg(ttl_ms)
-                      .invoke::<()>(conn) {
-                Ok(_) => {
-                    votes += 1;
-                    waitings -= 1;
-                    if waitings > 1 {
-                        continue;
-                    }
+            LOCK.arg(resource_name)
+                .arg(value)
+                .arg(ttl.num_milliseconds())
+                .invoke::<()>(&client.get_connection()?)?;
 
-                    if votes > quorum {
-                        return Ok(Lock {
-                                      redlock: self,
-                                      resource_name: String::from(resource_name),
-                                      value: String::from(value),
-                                      ttl,
-                                  });
-                    }
-                }
-                Err(_) => unimplemented!(),
+            let time_elapsed = lib_time::now() - start;
+            if time_elapsed > ttl {
+                return Err(RedlockError::TimeoutError);
+            }
+
+            if votes + 1 > quorum {
+                return Ok(Lock {
+                              redlock: self,
+                              resource_name: String::from(resource_name),
+                              value: String::from(value),
+                              ttl: (ttl - time_elapsed).to_std()?,
+                          });
+            }
+
+            waitings -= 1;
+            if waitings == 0 {
+                return Err(RedlockError::UnableToLock);
             }
         }
 

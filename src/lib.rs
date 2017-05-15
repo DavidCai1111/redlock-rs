@@ -1,3 +1,5 @@
+#![feature(catch_expr)]
+
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -6,10 +8,10 @@ extern crate redis;
 extern crate rand;
 extern crate time;
 
-use self::errors::*;
-use self::scripts::*;
-use self::redlock::*;
-use self::util::*;
+pub use self::errors::*;
+pub use self::scripts::*;
+pub use self::redlock::*;
+pub use self::util::*;
 
 mod errors;
 mod scripts;

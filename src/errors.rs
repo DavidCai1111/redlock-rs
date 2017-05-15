@@ -15,5 +15,11 @@ quick_error!{
     OutOfRangeError (err: time::OutOfRangeError) {
       from(err: time::OutOfRangeError) -> (err)
     }
+    TimeoutError {
+      description("Redlock request timeout")
+    }
+    UnableToLock {
+      description("Unable to lock the resource")
+    }
   }
 }
