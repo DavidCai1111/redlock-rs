@@ -13,6 +13,6 @@ mod tests {
 
     #[test]
     fn test_get_random_string() {
-        assert_eq!(32, get_random_string(32).len());
+        assert_eq!(get_random_string(32).len(), 32);
     }
 }

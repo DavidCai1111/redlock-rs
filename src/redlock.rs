@@ -1,6 +1,7 @@
 use std::time;
 use std::default::Default;
 use redis;
+use chrono;
 use scripts;
 use futures_cpupool::CpuPool;
 use errors::{RedlockResult, RedlockError};
@@ -11,6 +12,15 @@ lazy_static! {
   static ref UNLOCK: redis::Script = redis::Script::new(scripts::UNLOCK_SCRIPT);
 }
 
+#[derive(Debug)]
+pub struct Lock<'a> {
+    redlock: &'a Redlock,
+    resource_name: String,
+    value: String,
+    ttl: time::Duration,
+}
+
+#[derive(Debug)]
 pub struct Redlock {
     clients: Vec<redis::Client>,
     retry_count: u32,
@@ -26,7 +36,7 @@ pub struct Config<T: redis::IntoConnectionInfo> {
 impl Default for Config<&'static str> {
     fn default() -> Self {
         Config {
-            addrs: vec!["redis://127.0.0.1/"],
+            addrs: vec!["redis://127.0.0.1"],
             retry_count: 10,
             retry_delay: time::Duration::from_millis(400),
         }
@@ -50,19 +60,23 @@ impl Redlock {
            })
     }
 
-    pub fn lock(&self, resource_name: &str, ttl: time::Duration) -> RedlockResult<()> {
+    pub fn lock(&self, resource_name: &str, ttl: time::Duration) -> RedlockResult<Lock> {
         let clients_clen = self.clients.len();
         let mut waitings = clients_clen;
         let mut votes = 0;
+
+        let ttl_ms = chrono::Duration::from_std(ttl)?.num_milliseconds();
         let quorum = (clients_clen as f64 / 2_f64).floor() as usize + 1;
 
         let pool = CpuPool::new(clients_clen);
 
         for i in 0..clients_clen {
             let conn = &self.clients[i].get_connection()?;
+            let value: &str = &util::get_random_string(32);
 
             match LOCK.arg(resource_name)
-                      .arg(util::get_random_string(32))
+                      .arg(value)
+                      .arg(ttl_ms)
                       .invoke::<()>(conn) {
                 Ok(_) => {
                     votes += 1;
@@ -72,14 +86,19 @@ impl Redlock {
                     }
 
                     if votes > quorum {
-                        return Ok(());
+                        return Ok(Lock {
+                                      redlock: self,
+                                      resource_name: String::from(resource_name),
+                                      value: String::from(value),
+                                      ttl,
+                                  });
                     }
                 }
                 Err(_) => unimplemented!(),
             }
         }
 
-        Ok(())
+        unreachable!();
     }
 }
 
@@ -90,7 +109,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let default_config = Config::default();
-        assert_eq!(default_config.addrs, vec!["redis://127.0.0.1/"]);
+        assert_eq!(default_config.addrs, vec!["redis://127.0.0.1"]);
         assert_eq!(default_config.retry_count, 10);
         assert_eq!(default_config.retry_delay, time::Duration::from_millis(400));
     }
