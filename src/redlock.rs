@@ -1,18 +1,18 @@
 use std::time;
 use std::default::Default;
 use redis;
-use rand;
 use scripts;
+use futures_cpupool::CpuPool;
 use errors::{RedlockResult, RedlockError};
+use util;
 
 lazy_static! {
   static ref LOCK: redis::Script = redis::Script::new(scripts::LOCK_SCRIPT);
   static ref UNLOCK: redis::Script = redis::Script::new(scripts::UNLOCK_SCRIPT);
 }
 
-#[derive(Debug)]
 pub struct Redlock {
-    servers: Vec<redis::Client>,
+    clients: Vec<redis::Client>,
     retry_count: u32,
     retry_delay: time::Duration,
 }
@@ -38,20 +38,47 @@ impl Redlock {
         if config.addrs.is_empty() {
             return Err(RedlockError::NoServerError);
         }
-        let mut servers = Vec::with_capacity(config.addrs.len());
+        let mut clients = Vec::with_capacity(config.addrs.len());
         for addr in config.addrs {
-            servers.push(redis::Client::open(addr)?)
+            clients.push(redis::Client::open(addr)?)
         }
 
         Ok(Redlock {
-               servers: servers,
+               clients,
                retry_count: config.retry_count,
                retry_delay: config.retry_delay,
            })
     }
 
     pub fn lock(&self, resource_name: &str, ttl: time::Duration) -> RedlockResult<()> {
-        let mut waitings = self.servers.len();
+        let clients_clen = self.clients.len();
+        let mut waitings = clients_clen;
+        let mut votes = 0;
+        let quorum = (clients_clen as f64 / 2_f64).floor() as usize + 1;
+
+        let pool = CpuPool::new(clients_clen);
+
+        for i in 0..clients_clen {
+            let conn = &self.clients[i].get_connection()?;
+
+            match LOCK.arg(resource_name)
+                      .arg(util::get_random_string(32))
+                      .invoke::<()>(conn) {
+                Ok(_) => {
+                    votes += 1;
+                    waitings -= 1;
+                    if waitings > 1 {
+                        continue;
+                    }
+
+                    if votes > quorum {
+                        return Ok(());
+                    }
+                }
+                Err(_) => unimplemented!(),
+            }
+        }
+
         Ok(())
     }
 }
@@ -82,7 +109,7 @@ mod tests {
     #[test]
     fn test_new() {
         let redlock = Redlock::new(Config::default()).unwrap();
-        assert_eq!(1, redlock.servers.len());
+        assert_eq!(redlock.clients.len(), 1);
         assert_eq!(redlock.retry_count, 10);
         assert_eq!(redlock.retry_delay, time::Duration::from_millis(400));
     }
