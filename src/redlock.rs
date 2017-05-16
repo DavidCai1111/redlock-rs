@@ -72,7 +72,7 @@ impl Redlock {
         for (_, client) in self.clients.iter().enumerate() {
             let value: &str = &util::get_random_string(32);
 
-            let mut lock_job = || -> RedlockResult<Option<Lock>> {
+            match (|| -> RedlockResult<Option<Lock>> {
                 LOCK.arg(resource_name)
                     .arg(value)
                     .arg(ttl.num_milliseconds())
@@ -94,9 +94,7 @@ impl Redlock {
                 } else {
                     Ok(None)
                 }
-            };
-
-            match lock_job() {
+            })() {
                 Ok(lock_opt) => {
                     if let Some(lock) = lock_opt {
                         return Ok(lock);
