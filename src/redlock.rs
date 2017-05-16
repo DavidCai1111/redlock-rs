@@ -1,6 +1,5 @@
-use std::time;
+use std::time::{Duration, SystemTime};
 use std::default::Default;
-use time as lib_time;
 use redis;
 use scripts::{LOCK, UNLOCK};
 use errors::{RedlockResult, RedlockError};
@@ -11,7 +10,7 @@ pub struct Lock<'a> {
     redlock: &'a Redlock,
     resource_name: String,
     value: String,
-    ttl: time::Duration,
+    ttl: Duration,
 }
 
 impl<'a> Lock<'a> {
@@ -24,13 +23,13 @@ impl<'a> Lock<'a> {
 pub struct Redlock {
     clients: Vec<redis::Client>,
     retry_count: u32,
-    retry_delay: time::Duration,
+    retry_delay: Duration,
 }
 
 pub struct Config<T: redis::IntoConnectionInfo> {
     pub addrs: Vec<T>,
     pub retry_count: u32,
-    pub retry_delay: time::Duration,
+    pub retry_delay: Duration,
 }
 
 impl Default for Config<&'static str> {
@@ -38,7 +37,7 @@ impl Default for Config<&'static str> {
         Config {
             addrs: vec!["redis://127.0.0.1"],
             retry_count: 10,
-            retry_delay: time::Duration::from_millis(400),
+            retry_delay: Duration::from_millis(400),
         }
     }
 }
@@ -60,14 +59,13 @@ impl Redlock {
            })
     }
 
-    pub fn lock(&self, resource_name: &str, ttl: time::Duration) -> RedlockResult<Lock> {
+    pub fn lock(&self, resource_name: &str, ttl: Duration) -> RedlockResult<Lock> {
         let clients_len = self.clients.len();
-        let ttl = lib_time::Duration::from_std(ttl)?;
         let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
 
         let mut waitings = clients_len;
         let mut votes = 0;
-        let start = lib_time::now();
+        let start = SystemTime::now();
 
         for (_, client) in self.clients.iter().enumerate() {
             let value: &str = &util::get_random_string(32);
@@ -75,10 +73,10 @@ impl Redlock {
             match (|| -> RedlockResult<Option<Lock>> {
                 LOCK.arg(resource_name)
                     .arg(value)
-                    .arg(ttl.num_milliseconds())
+                    .arg(util::num_milliseconds(ttl))
                     .invoke::<()>(&client.get_connection()?)?;
 
-                let time_elapsed = lib_time::now() - start;
+                let time_elapsed = start.elapsed()?;
                 if time_elapsed > ttl {
                     return Err(RedlockError::TimeoutError);
                 }
@@ -89,7 +87,7 @@ impl Redlock {
                                 redlock: self,
                                 resource_name: String::from(resource_name),
                                 value: String::from(value),
-                                ttl: (ttl - time_elapsed).to_std()?,
+                                ttl: ttl - time_elapsed,
                             }))
                 } else {
                     Ok(None)
@@ -125,7 +123,7 @@ mod tests {
         let default_config = Config::default();
         assert_eq!(default_config.addrs, vec!["redis://127.0.0.1"]);
         assert_eq!(default_config.retry_count, 10);
-        assert_eq!(default_config.retry_delay, time::Duration::from_millis(400));
+        assert_eq!(default_config.retry_delay, Duration::from_millis(400));
     }
 
     #[test]
@@ -134,7 +132,7 @@ mod tests {
         let redlock = Redlock::new::<&str>(Config {
                                                addrs: vec![],
                                                retry_count: 10,
-                                               retry_delay: time::Duration::from_millis(400),
+                                               retry_delay: Duration::from_millis(400),
                                            })
                 .unwrap();
     }
@@ -144,6 +142,6 @@ mod tests {
         let redlock = Redlock::new(Config::default()).unwrap();
         assert_eq!(redlock.clients.len(), 1);
         assert_eq!(redlock.retry_count, 10);
-        assert_eq!(redlock.retry_delay, time::Duration::from_millis(400));
+        assert_eq!(redlock.retry_delay, Duration::from_millis(400));
     }
 }

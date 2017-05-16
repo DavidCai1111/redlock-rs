@@ -4,7 +4,6 @@ extern crate lazy_static;
 extern crate quick_error;
 extern crate redis;
 extern crate rand;
-extern crate time;
 
 pub use self::errors::*;
 pub use self::scripts::*;

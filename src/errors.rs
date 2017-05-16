@@ -1,5 +1,5 @@
+use std::time;
 use redis;
-use time;
 
 pub type RedlockResult<T> = Result<T, RedlockError>;
 
@@ -12,14 +12,14 @@ quick_error!{
     NoServerError {
       description("Redlock must be initialized with at least one redis server")
     }
-    OutOfRangeError (err: time::OutOfRangeError) {
-      from(err: time::OutOfRangeError) -> (err)
-    }
     TimeoutError {
       description("Redlock request timeout")
     }
     UnableToLock {
       description("Unable to lock the resource")
+    }
+    TimeError(err: time::SystemTimeError) {
+      from(err: time::SystemTimeError) -> (err)
     }
   }
 }
