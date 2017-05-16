@@ -18,7 +18,7 @@ pub struct Lock<'a> {
 
 impl<'a> Lock<'a> {
     pub fn unlock(&self) -> RedlockResult<()> {
-        unimplemented!()
+        self.redlock.unlock(&self.resource_name, &self.value)
     }
 }
 
@@ -70,6 +70,36 @@ impl Redlock {
            })
     }
 
+    pub fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
+        let clients_len = self.clients.len();
+        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
+
+        let mut waitings = clients_len;
+        let mut votes = 0;
+        let mut attempts = 0;
+
+        'attempts: while attempts < self.retry_count {
+            attempts += 1;
+            for (_, client) in self.clients.iter().enumerate() {
+                match unlock(client, resource_name, value) {
+                    Ok(_) => {
+                        waitings -= 1;
+                        if waitings > 0 {
+                            continue;
+                        }
+                        votes += 1;
+                        if votes >= quorum {
+                            return Ok(());
+                        }
+                    }
+                    Err(_) => continue 'attempts,
+                }
+            }
+        }
+
+        Err(RedlockError::UnableToUnlock)
+    }
+
     pub fn lock(&self, resource_name: &str, ttl: Duration) -> RedlockResult<Lock> {
         let clients_len = self.clients.len();
         let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
@@ -84,7 +114,7 @@ impl Redlock {
             attempts += 1;
             for (_, client) in self.clients.iter().enumerate() {
                 let value: &str = &util::get_random_string(32);
-                match Self::actual_lock(client, resource_name, value, ttl) {
+                match lock(client, resource_name, value, ttl) {
                     Ok(_) => {
                         waitings -= 1;
                         if waitings > 0 {
@@ -131,20 +161,28 @@ impl Redlock {
             self.retry_delay.sub(Duration::from_millis(-jitter as u64))
         }
     }
+}
 
-    #[inline]
-    fn actual_lock(client: &redis::Client,
-                   resource_name: &str,
-                   value: &str,
-                   ttl: Duration)
-                   -> RedlockResult<()> {
-        LOCK.arg(resource_name)
-            .arg(value)
-            .arg(util::num_milliseconds(ttl))
-            .invoke::<()>(&client.get_connection()?)?;
+fn lock(client: &redis::Client,
+        resource_name: &str,
+        value: &str,
+        ttl: Duration)
+        -> RedlockResult<()> {
+    LOCK.arg(resource_name)
+        .arg(value)
+        .arg(util::num_milliseconds(ttl))
+        .invoke::<()>(&client.get_connection()?)?;
 
-        Ok(())
-    }
+    Ok(())
+}
+
+fn unlock(client: &redis::Client, resource_name: &str, value: &str) -> RedlockResult<()> {
+    UNLOCK
+        .arg(resource_name)
+        .arg(value)
+        .invoke::<()>(&client.get_connection()?)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -162,13 +200,13 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_new_with_no_server() {
-        let redlock = Redlock::new::<&str>(Config {
-                                               addrs: vec![],
-                                               retry_count: 10,
-                                               retry_delay: Duration::from_millis(400),
-                                               retry_jitter: 400,
-                                               drift_factor: 0.01,
-                                           })
+        Redlock::new::<&str>(Config {
+                                 addrs: vec![],
+                                 retry_count: 10,
+                                 retry_delay: Duration::from_millis(400),
+                                 retry_jitter: 400,
+                                 drift_factor: 0.01,
+                             })
                 .unwrap();
     }
 

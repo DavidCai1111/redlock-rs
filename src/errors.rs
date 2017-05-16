@@ -18,6 +18,9 @@ quick_error!{
     UnableToLock {
       description("Unable to lock the resource")
     }
+    UnableToUnlock {
+      description("Unable to unlock the resource")
+    }
     TimeError(err: time::SystemTimeError) {
       from(err: time::SystemTimeError) -> (err)
     }
