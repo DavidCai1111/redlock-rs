@@ -1,6 +1,9 @@
+use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime};
 use std::default::Default;
+use std::thread;
 use redis;
+use rand::{thread_rng, Rng};
 use scripts::{LOCK, UNLOCK};
 use errors::{RedlockResult, RedlockError};
 use util;
@@ -24,12 +27,16 @@ pub struct Redlock {
     clients: Vec<redis::Client>,
     retry_count: u32,
     retry_delay: Duration,
+    retry_jitter: u32,
+    drift_factor: f32,
 }
 
 pub struct Config<T: redis::IntoConnectionInfo> {
     pub addrs: Vec<T>,
     pub retry_count: u32,
     pub retry_delay: Duration,
+    pub retry_jitter: u32,
+    pub drift_factor: f32,
 }
 
 impl Default for Config<&'static str> {
@@ -38,6 +45,8 @@ impl Default for Config<&'static str> {
             addrs: vec!["redis://127.0.0.1"],
             retry_count: 10,
             retry_delay: Duration::from_millis(400),
+            retry_jitter: 400,
+            drift_factor: 0.01,
         }
     }
 }
@@ -56,6 +65,8 @@ impl Redlock {
                clients,
                retry_count: config.retry_count,
                retry_delay: config.retry_delay,
+               retry_jitter: config.retry_jitter,
+               drift_factor: config.drift_factor,
            })
     }
 
@@ -65,52 +76,74 @@ impl Redlock {
 
         let mut waitings = clients_len;
         let mut votes = 0;
+        let mut attempts = 0;
+
         let start = SystemTime::now();
 
-        for (_, client) in self.clients.iter().enumerate() {
-            let value: &str = &util::get_random_string(32);
+        'attempts: while attempts < self.retry_count {
+            attempts += 1;
+            for (_, client) in self.clients.iter().enumerate() {
+                let value: &str = &util::get_random_string(32);
+                match Self::actual_lock(client, resource_name, value, ttl) {
+                    Ok(_) => {
+                        waitings -= 1;
+                        if waitings > 0 {
+                            continue;
+                        }
 
-            match (|| -> RedlockResult<Option<Lock>> {
-                LOCK.arg(resource_name)
-                    .arg(value)
-                    .arg(util::num_milliseconds(ttl))
-                    .invoke::<()>(&client.get_connection()?)?;
+                        let time_elapsed = start.elapsed()?;
+                        let lock = Lock {
+                            redlock: self,
+                            resource_name: String::from(resource_name),
+                            value: String::from(value),
+                            ttl: ttl - time_elapsed,
+                        };
 
-                let time_elapsed = start.elapsed()?;
-                if time_elapsed > ttl {
-                    return Err(RedlockError::TimeoutError);
-                }
+                        votes += 1;
+                        if votes > quorum && time_elapsed < ttl {
+                            return Ok(lock);
+                        }
 
-                votes += 1;
-                if votes > quorum {
-                    Ok(Some(Lock {
-                                redlock: self,
-                                resource_name: String::from(resource_name),
-                                value: String::from(value),
-                                ttl: ttl - time_elapsed,
-                            }))
-                } else {
-                    Ok(None)
-                }
-            })() {
-                Ok(lock_opt) => {
-                    if let Some(lock) = lock_opt {
-                        return Ok(lock);
-                    } else {
-                        continue;
+                        match lock.unlock() {
+                            _ => {
+                                thread::sleep(self.get_retry_timeout());
+                                continue 'attempts;
+                            }
+                        };
                     }
-                }
-                Err(_) => {
-                    waitings -= 1;
-                    if waitings == 0 {
-                        return Err(RedlockError::UnableToLock);
+                    Err(_) => {
+                        thread::sleep(self.get_retry_timeout());
+                        continue 'attempts;
                     }
-                    continue;
                 }
             }
         }
 
-        unreachable!();
+
+        Err(RedlockError::UnableToLock)
+    }
+
+    fn get_retry_timeout(&self) -> Duration {
+        let jitter = self.retry_jitter as i32 * thread_rng().gen_range(-1, 1);
+        if jitter >= 0 {
+            self.retry_delay.add(Duration::from_millis(jitter as u64))
+        } else {
+            self.retry_delay.sub(Duration::from_millis(-jitter as u64))
+        }
+    }
+
+    #[inline]
+    fn actual_lock(client: &redis::Client,
+                   resource_name: &str,
+                   value: &str,
+                   ttl: Duration)
+                   -> RedlockResult<()> {
+        LOCK.arg(resource_name)
+            .arg(value)
+            .arg(util::num_milliseconds(ttl))
+            .invoke::<()>(&client.get_connection()?)?;
+
+        Ok(())
     }
 }
 
@@ -133,6 +166,8 @@ mod tests {
                                                addrs: vec![],
                                                retry_count: 10,
                                                retry_delay: Duration::from_millis(400),
+                                               retry_jitter: 400,
+                                               drift_factor: 0.01,
                                            })
                 .unwrap();
     }
