@@ -4,7 +4,7 @@ use std::default::Default;
 use std::thread;
 use redis;
 use rand::{thread_rng, Rng};
-use scripts::{LOCK, UNLOCK};
+use scripts::{LOCK, UNLOCK, EXTEND};
 use errors::{RedlockResult, RedlockError};
 use util;
 
@@ -13,12 +13,20 @@ pub struct Lock<'a> {
     redlock: &'a Redlock,
     resource_name: String,
     value: String,
-    ttl: Duration,
+    expiration: SystemTime,
 }
 
 impl<'a> Lock<'a> {
     pub fn unlock(&self) -> RedlockResult<()> {
         self.redlock.unlock(&self.resource_name, &self.value)
+    }
+
+    pub fn extend(&self, ttl: Duration) -> RedlockResult<Lock> {
+        if self.expiration < SystemTime::now() {
+            return Err(RedlockError::LockExpired);
+        }
+
+        Ok(self.redlock.extend(&self.resource_name, &self.value, ttl)?)
     }
 }
 
@@ -62,7 +70,7 @@ impl Redlock {
         }
 
         Ok(Redlock {
-               clients,
+               clients: clients,
                retry_count: config.retry_count,
                retry_delay: config.retry_delay,
                retry_jitter: config.retry_jitter,
@@ -70,7 +78,64 @@ impl Redlock {
            })
     }
 
-    pub fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
+    // Locks the given resource using the Redlock algorithm.
+    pub fn lock(&self, resource_name: &str, ttl: Duration) -> RedlockResult<Lock> {
+        let clients_len = self.clients.len();
+        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
+
+        let mut waitings = clients_len;
+        let mut votes = 0;
+        let mut attempts = 0;
+
+        'attempts: while attempts < self.retry_count {
+            // start time of this attempt
+            let start = SystemTime::now();
+
+            attempts += 1;
+            for client in &self.clients {
+                let value: &str = &util::get_random_string(32);
+                match lock(client, resource_name, value, ttl) {
+                    Ok(_) => {
+                        waitings -= 1;
+                        if waitings > 0 {
+                            continue;
+                        }
+
+                        let time_elapsed = start.elapsed()?;
+                        let lock = Lock {
+                            redlock: self,
+                            resource_name: String::from(resource_name),
+                            value: String::from(value),
+                            expiration: start + ttl - time_elapsed,
+                        };
+
+                        votes += 1;
+                        // suceess: aquire the lock
+                        if votes > quorum && time_elapsed < ttl {
+                            return Ok(lock);
+                        }
+
+                        // fail: releases all the lock aquired and retry
+                        match lock.unlock() {
+                            _ => {
+                                thread::sleep(self.get_retry_timeout());
+                                continue 'attempts;
+                            }
+                        };
+                    }
+                    Err(_) => {
+                        thread::sleep(self.get_retry_timeout());
+                        continue 'attempts;
+                    }
+                }
+            }
+        }
+
+        Err(RedlockError::UnableToExtend)
+    }
+
+    // Releases the given lock.
+    fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
         let clients_len = self.clients.len();
         let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
 
@@ -80,7 +145,7 @@ impl Redlock {
 
         'attempts: while attempts < self.retry_count {
             attempts += 1;
-            for (_, client) in self.clients.iter().enumerate() {
+            for client in &self.clients {
                 match unlock(client, resource_name, value) {
                     Ok(_) => {
                         waitings -= 1;
@@ -100,7 +165,7 @@ impl Redlock {
         Err(RedlockError::UnableToUnlock)
     }
 
-    pub fn lock(&self, resource_name: &str, ttl: Duration) -> RedlockResult<Lock> {
+    fn extend(&self, resource_name: &str, value: &str, ttl: Duration) -> RedlockResult<Lock> {
         let clients_len = self.clients.len();
         let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
 
@@ -108,13 +173,13 @@ impl Redlock {
         let mut votes = 0;
         let mut attempts = 0;
 
-        let start = SystemTime::now();
-
         'attempts: while attempts < self.retry_count {
+            // start time of this attempt
+            let start = SystemTime::now();
+
             attempts += 1;
-            for (_, client) in self.clients.iter().enumerate() {
-                let value: &str = &util::get_random_string(32);
-                match lock(client, resource_name, value, ttl) {
+            for client in &self.clients {
+                match extend(client, resource_name, value, ttl) {
                     Ok(_) => {
                         waitings -= 1;
                         if waitings > 0 {
@@ -126,14 +191,16 @@ impl Redlock {
                             redlock: self,
                             resource_name: String::from(resource_name),
                             value: String::from(value),
-                            ttl: ttl - time_elapsed,
+                            expiration: start + ttl - time_elapsed,
                         };
 
                         votes += 1;
+                        // suceess: aquire the lock
                         if votes > quorum && time_elapsed < ttl {
                             return Ok(lock);
                         }
 
+                        // fail: releases all the lock aquired and retry
                         match lock.unlock() {
                             _ => {
                                 thread::sleep(self.get_retry_timeout());
@@ -148,7 +215,6 @@ impl Redlock {
                 }
             }
         }
-
 
         Err(RedlockError::UnableToLock)
     }
@@ -182,6 +248,19 @@ fn unlock(client: &redis::Client, resource_name: &str, value: &str) -> RedlockRe
         .arg(value)
         .invoke::<()>(&client.get_connection()?)?;
 
+    Ok(())
+}
+
+fn extend(client: &redis::Client,
+          resource_name: &str,
+          value: &str,
+          ttl: Duration)
+          -> RedlockResult<()> {
+    EXTEND
+        .arg(resource_name)
+        .arg(value)
+        .arg(util::num_milliseconds(ttl))
+        .invoke::<()>(&client.get_connection()?)?;
     Ok(())
 }
 

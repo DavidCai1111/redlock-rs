@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn test_num_milliseconds() {
-        let duration = Duration::from_millis(5010);
-        assert_eq!(num_milliseconds(duration), 5010);
+        assert_eq!(num_milliseconds(Duration::from_millis(5010)), 5010);
+        assert_eq!(num_milliseconds(Duration::from_millis(0)), 0);
     }
 }
