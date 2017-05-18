@@ -96,46 +96,6 @@ impl Redlock {
                      ttl)
     }
 
-    // Releases the given lock.
-    fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
-        let clients_len = self.clients.len();
-        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
-
-        let mut waitings = clients_len;
-        let mut votes = 0;
-        let mut attempts = 0;
-
-        'attempts: while attempts < self.retry_count {
-            attempts += 1;
-            for client in &self.clients {
-                match unlock(client, resource_name, value) {
-                    Ok(_) => {
-                        waitings -= 1;
-                        if waitings > 0 {
-                            continue;
-                        }
-                        votes += 1;
-                        if votes >= quorum {
-                            return Ok(());
-                        }
-                    }
-                    Err(_) => continue 'attempts,
-                }
-            }
-        }
-
-        Err(RedlockError::UnableToUnlock)
-    }
-
-    fn get_retry_timeout(&self) -> Duration {
-        let jitter = self.retry_jitter as i32 * thread_rng().gen_range(-1, 1);
-        if jitter >= 0 {
-            self.retry_delay.add(Duration::from_millis(jitter as u64))
-        } else {
-            self.retry_delay.sub(Duration::from_millis(-jitter as u64))
-        }
-    }
-
     fn request(&self,
                info: RequestInfo,
                resource_name: &str,
@@ -175,17 +135,16 @@ impl Redlock {
                             continue;
                         }
 
-                        let time_elapsed = start.elapsed()?;
                         let lock = Lock {
                             redlock: self,
                             resource_name: String::from(resource_name),
                             value: String::from(value),
-                            expiration: start + ttl - time_elapsed,
+                            expiration: start + ttl,
                         };
 
                         votes += 1;
                         // suceess: aquire the lock
-                        if votes >= quorum && time_elapsed < ttl {
+                        if votes >= quorum && lock.expiration > SystemTime::now() {
                             return Ok(lock);
                         }
 
@@ -208,6 +167,46 @@ impl Redlock {
         match info {
             RequestInfo::Lock => Err(RedlockError::UnableToLock),
             RequestInfo::Extend { .. } => Err(RedlockError::UnableToExtend),
+        }
+    }
+
+    // Releases the given lock.
+    fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
+        let clients_len = self.clients.len();
+        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
+
+        let mut waitings = clients_len;
+        let mut votes = 0;
+        let mut attempts = 0;
+
+        'attempts: while attempts < self.retry_count {
+            attempts += 1;
+            for client in &self.clients {
+                match unlock(client, resource_name, value) {
+                    Ok(_) => {
+                        waitings -= 1;
+                        if waitings > 0 {
+                            continue;
+                        }
+                        votes += 1;
+                        if votes >= quorum {
+                            return Ok(());
+                        }
+                    }
+                    Err(_) => continue 'attempts,
+                }
+            }
+        }
+
+        Err(RedlockError::UnableToUnlock)
+    }
+
+    fn get_retry_timeout(&self) -> Duration {
+        let jitter = self.retry_jitter as i32 * thread_rng().gen_range(-1, 1);
+        if jitter >= 0 {
+            self.retry_delay.add(Duration::from_millis(jitter as u64))
+        } else {
+            self.retry_delay.sub(Duration::from_millis(-jitter as u64))
         }
     }
 }
@@ -286,5 +285,6 @@ mod tests {
         let lock = redlock
             .lock("test_lock", Duration::from_millis(2000))
             .unwrap();
+        assert!(lock.expiration < SystemTime::now().add(Duration::from_millis(2000)));
     }
 }
