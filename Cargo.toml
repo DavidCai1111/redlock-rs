@@ -2,6 +2,13 @@
 name = "redlock"
 version = "0.1.0"
 authors = ["David Cai <davidcai1993@yahoo.com>"]
+documentation = "https://github.com/DavidCai1993/redlock-rs"
+homepage = "https://github.com/DavidCai1993/redlock-rs"
+readme = "README.md"
+repository = "https://github.com/DavidCai1993/redlock-rs"
+keywords = ["redlock", "redis", "lock", "mutex", "distribution"]
+categories = ["concurrency", "algorithms"]
+license = "MIT"
 
 [dependencies]
 lazy_static = "0.2"
