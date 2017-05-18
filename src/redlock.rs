@@ -249,6 +249,14 @@ fn extend(client: &redis::Client,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use redis::Commands;
+
+    fn get_local_redis_conn() -> redis::Connection {
+        redis::Client::open("redis://127.0.0.1")
+            .unwrap()
+            .get_connection()
+            .unwrap()
+    }
 
     #[test]
     fn test_config_default() {
@@ -282,9 +290,39 @@ mod tests {
     #[test]
     fn test_lock() {
         let redlock = Redlock::new(Config::default()).unwrap();
+        let resource_name = "test_lock";
         let lock = redlock
-            .lock("test_lock", Duration::from_millis(2000))
+            .lock(resource_name, Duration::from_millis(2000))
             .unwrap();
         assert!(lock.expiration < SystemTime::now().add(Duration::from_millis(2000)));
+    }
+
+    #[test]
+    fn test_unlock() {
+        let redlock = Redlock::new(Config::default()).unwrap();
+        let resource_name = "test_unlock";
+        let lock = redlock
+            .lock(resource_name, Duration::from_millis(2000))
+            .unwrap();
+
+        let conn = get_local_redis_conn();
+        let value: String = conn.get(resource_name).unwrap();
+        assert_eq!(value.len(), 32);
+
+        lock.unlock().unwrap();
+        let res: Option<String> = conn.get(resource_name).unwrap();
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn test_extend() {
+        let redlock = Redlock::new(Config::default()).unwrap();
+        let resource_name = "test_extend";
+        let lock = redlock
+            .lock(resource_name, Duration::from_millis(2000))
+            .unwrap();
+        let lock_extended = lock.extend(Duration::from_millis(2000)).unwrap();
+
+        assert!(lock_extended.expiration < SystemTime::now().add(Duration::from_millis(2000)));
     }
 }
