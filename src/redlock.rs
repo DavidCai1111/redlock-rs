@@ -112,6 +112,10 @@ impl Redlock {
                ttl: Duration)
                -> RedlockResult<(Lock)> {
         let mut attempts = 0;
+        let drift = Duration::from_millis((self.drift_factor as f64 *
+                                           util::num_milliseconds(ttl) as f64)
+                                                  .round() as
+                                          u64 + 2);
 
         'attempts: while attempts < self.retry_count {
             attempts += 1;
@@ -138,7 +142,7 @@ impl Redlock {
                     redlock: self,
                     resource_name: String::from(resource_name),
                     value: value.clone(),
-                    expiration: start + ttl,
+                    expiration: start + ttl - drift,
                 };
 
                 match request_result {
@@ -160,9 +164,9 @@ impl Redlock {
                         continue 'attempts;
                     }
                     Err(_) => {
+                        errors += 1;
                         // This attempt is doomed to fail, will retry after
                         // the timeout
-                        errors += 1;
                         if errors > self.quorum {
                             lock.unlock().is_ok(); // Just ingore the result
                             thread::sleep(self.get_retry_timeout());
