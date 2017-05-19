@@ -39,17 +39,10 @@ impl<'a> Lock<'a> {
     }
 }
 
-#[derive(Debug)]
-pub struct Redlock {
-    clients: Vec<redis::Client>,
-    retry_count: u32,
-    retry_delay: Duration,
-    retry_jitter: u32,
-    drift_factor: f32,
-}
-
 // Configuration of Redlock
-pub struct Config<T: redis::IntoConnectionInfo> {
+pub struct Config<T>
+    where T: redis::IntoConnectionInfo
+{
     pub addrs: Vec<T>,
     pub retry_count: u32,
     pub retry_delay: Duration,
@@ -69,6 +62,16 @@ impl Default for Config<&'static str> {
     }
 }
 
+#[derive(Debug)]
+pub struct Redlock {
+    clients: Vec<redis::Client>,
+    retry_count: u32,
+    retry_delay: Duration,
+    retry_jitter: u32,
+    drift_factor: f32,
+    quorum: usize,
+}
+
 impl Redlock {
     // Create a new redlock instance.
     pub fn new<T: redis::IntoConnectionInfo>(config: Config<T>) -> RedlockResult<Redlock> {
@@ -80,12 +83,15 @@ impl Redlock {
             clients.push(redis::Client::open(addr)?)
         }
 
+        let quorum = (clients.len() as f64 / 2_f64).floor() as usize + 1;
+
         Ok(Redlock {
                clients: clients,
                retry_count: config.retry_count,
                retry_delay: config.retry_delay,
                retry_jitter: config.retry_jitter,
                drift_factor: config.drift_factor,
+               quorum: quorum,
            })
     }
 
@@ -105,10 +111,7 @@ impl Redlock {
                resource_name: &str,
                ttl: Duration)
                -> RedlockResult<(Lock)> {
-        let clients_len = self.clients.len();
-        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
-
-        let mut waitings = clients_len;
+        let mut waitings = self.clients.len();
         let mut votes = 0;
         let mut attempts = 0;
 
@@ -148,7 +151,7 @@ impl Redlock {
 
                         votes += 1;
                         // suceess: aquire the lock
-                        if votes >= quorum && lock.expiration > SystemTime::now() {
+                        if votes >= self.quorum && lock.expiration > SystemTime::now() {
                             return Ok(lock);
                         }
 
@@ -175,10 +178,7 @@ impl Redlock {
     }
 
     fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
-        let clients_len = self.clients.len();
-        let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
-
-        let mut waitings = clients_len;
+        let mut waitings = self.clients.len();
         let mut votes = 0;
         let mut attempts = 0;
 
@@ -192,7 +192,7 @@ impl Redlock {
                             continue;
                         }
                         votes += 1;
-                        if votes >= quorum {
+                        if votes >= self.quorum {
                             return Ok(());
                         }
                     }
