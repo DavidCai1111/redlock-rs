@@ -7,7 +7,7 @@ fn example() -> RedlockResult<()> {
     let redlock = Redlock::new(Config {
                                    addrs: vec!["redis1.example.com",
                                                "redis2.example.com",
-                                               "redis2.example.com"],
+                                               "redis3.example.com"],
                                    retry_count: 10,
                                    retry_delay: time::Duration::from_millis(400),
                                    retry_jitter: 400,

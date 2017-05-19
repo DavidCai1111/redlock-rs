@@ -7,12 +7,12 @@ A rust [redlock](https://redis.io/topics/distlock) implementation for distribute
 
 ```toml
 [dependencies]
-rust_redlock = "0.5.3"
+rust_redlock = "0.2.2"
 ```
 
 ## Documentation
 
-See: https://docs.rs/rust_redlock/0.1.0/rust_redlock
+See: https://docs.rs/rust_redlock/0.2.2/rust_redlock
 
 ## Usage
 
@@ -20,7 +20,7 @@ See: https://docs.rs/rust_redlock/0.1.0/rust_redlock
 let redlock = Redlock::new(Config {
     addrs: vec!["redis1.example.com",
                 "redis2.example.com",
-                "redis2.example.com"],
+                "redis3.example.com"],
     retry_count: 10,
     retry_delay: time::Duration::from_millis(400),
     retry_jitter: 400,
