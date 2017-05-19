@@ -111,28 +111,34 @@ impl Redlock {
                resource_name: &str,
                ttl: Duration)
                -> RedlockResult<(Lock)> {
-        let mut waitings = self.clients.len();
-        let mut votes = 0;
         let mut attempts = 0;
 
         'attempts: while attempts < self.retry_count {
-            // start time of this attempt
+            attempts += 1;
+
+            // Start time of this attempt
             let start = SystemTime::now();
 
-            attempts += 1;
-            for client in &self.clients {
-                let value: String;
-                let request_result: RedlockResult<()>;
+            let mut waitings = self.clients.len();
+            let mut votes = 0;
+            let mut errors = 0;
 
-                match info {
-                    RequestInfo::Lock => {
-                        value = util::get_random_string(32);
-                        request_result = lock(client, resource_name, &value, ttl);
-                    }
-                    RequestInfo::Extend { resource_value } => {
-                        value = String::from(resource_value);
-                        request_result = extend(client, resource_name, &value, ttl);
-                    }
+            let value: String = match info {
+                RequestInfo::Lock => util::get_random_string(32),
+                RequestInfo::Extend { resource_value } => String::from(resource_value),
+            };
+
+            for client in &self.clients {
+                let request_result = match info {
+                    RequestInfo::Lock => lock(client, resource_name, &value, ttl),
+                    RequestInfo::Extend { .. } => extend(client, resource_name, &value, ttl),
+                };
+
+                let lock = Lock {
+                    redlock: self,
+                    resource_name: String::from(resource_name),
+                    value: value.clone(),
+                    expiration: start + ttl,
                 };
 
                 match request_result {
@@ -142,35 +148,32 @@ impl Redlock {
                             continue;
                         }
 
-                        let lock = Lock {
-                            redlock: self,
-                            resource_name: String::from(resource_name),
-                            value: String::from(value),
-                            expiration: start + ttl,
-                        };
-
                         votes += 1;
                         // suceess: aquire the lock
                         if votes >= self.quorum && lock.expiration > SystemTime::now() {
                             return Ok(lock);
                         }
 
-                        // fail: releases all the lock aquired and retry
-                        match lock.unlock() {
-                            _ => {
-                                thread::sleep(self.get_retry_timeout());
-                                continue 'attempts;
-                            }
-                        };
-                    }
-                    Err(_) => {
+                        // fail: releases all aquired locks and retry
+                        lock.unlock().is_ok(); // Just ingore the result
                         thread::sleep(self.get_retry_timeout());
                         continue 'attempts;
+                    }
+                    Err(_) => {
+                        // This attempt is doomed to fail, will retry after
+                        // the timeout
+                        errors += 1;
+                        if errors > self.quorum {
+                            lock.unlock().is_ok(); // Just ingore the result
+                            thread::sleep(self.get_retry_timeout());
+                            continue 'attempts;
+                        }
                     }
                 }
             }
         }
 
+        // Exceed the retry count, return the error
         match info {
             RequestInfo::Lock => Err(RedlockError::UnableToLock),
             RequestInfo::Extend { .. } => Err(RedlockError::UnableToExtend),
@@ -178,12 +181,15 @@ impl Redlock {
     }
 
     fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
-        let mut waitings = self.clients.len();
-        let mut votes = 0;
         let mut attempts = 0;
 
         'attempts: while attempts < self.retry_count {
             attempts += 1;
+
+            let mut waitings = self.clients.len();
+            let mut votes = 0;
+            let mut errors = 0;
+
             for client in &self.clients {
                 match unlock(client, resource_name, value) {
                     Ok(_) => {
@@ -196,11 +202,20 @@ impl Redlock {
                             return Ok(());
                         }
                     }
-                    Err(_) => continue 'attempts,
+                    Err(_) => {
+                        errors += 1;
+                        // This attempt is doomed to fail, will retry after
+                        // the timeout
+                        if errors >= self.quorum {
+                            thread::sleep(self.get_retry_timeout());
+                            continue 'attempts;
+                        }
+                    }
                 }
             }
         }
 
+        // Exceed the retry count, return the error
         Err(RedlockError::UnableToUnlock)
     }
 
