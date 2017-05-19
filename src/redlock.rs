@@ -14,6 +14,7 @@ enum RequestInfo<'a> {
     Extend { resource_value: &'a str },
 }
 
+// Lock represents a acquired lock for specified resource.
 #[derive(Debug)]
 pub struct Lock<'a> {
     redlock: &'a Redlock,
@@ -23,10 +24,12 @@ pub struct Lock<'a> {
 }
 
 impl<'a> Lock<'a> {
+    // Release the acquired lock.
     pub fn unlock(&self) -> RedlockResult<()> {
         self.redlock.unlock(&self.resource_name, &self.value)
     }
 
+    // Extend the TTL of acquired lock.
     pub fn extend(&self, ttl: Duration) -> RedlockResult<Lock> {
         if self.expiration < SystemTime::now() {
             return Err(RedlockError::LockExpired);
@@ -45,6 +48,7 @@ pub struct Redlock {
     drift_factor: f32,
 }
 
+// Configuration of Redlock
 pub struct Config<T: redis::IntoConnectionInfo> {
     pub addrs: Vec<T>,
     pub retry_count: u32,
@@ -66,6 +70,7 @@ impl Default for Config<&'static str> {
 }
 
 impl Redlock {
+    // Create a new redlock instance.
     pub fn new<T: redis::IntoConnectionInfo>(config: Config<T>) -> RedlockResult<Redlock> {
         if config.addrs.is_empty() {
             return Err(RedlockError::NoServerError);
@@ -89,7 +94,6 @@ impl Redlock {
         self.request(RequestInfo::Lock, resource_name, ttl)
     }
 
-    // Extends the given resource.
     fn extend(&self, resource_name: &str, value: &str, ttl: Duration) -> RedlockResult<Lock> {
         self.request(RequestInfo::Extend { resource_value: value },
                      resource_name,
@@ -170,7 +174,6 @@ impl Redlock {
         }
     }
 
-    // Releases the given lock.
     fn unlock(&self, resource_name: &str, value: &str) -> RedlockResult<()> {
         let clients_len = self.clients.len();
         let quorum = (clients_len as f64 / 2_f64).floor() as usize + 1;
