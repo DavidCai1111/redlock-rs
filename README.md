@@ -12,7 +12,7 @@ rust_redlock = "0.3.0"
 
 ## Documentation
 
-See: https://docs.rs/rust_redlock/0.2.2/rust_redlock
+See: https://docs.rs/rust_redlock/0.3.0/rust_redlock
 
 ## Usage
 
