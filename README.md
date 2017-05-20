@@ -7,7 +7,7 @@ A rust [redlock](https://redis.io/topics/distlock) implementation for distribute
 
 ```toml
 [dependencies]
-rust_redlock = "0.2.2"
+rust_redlock = "0.3.0"
 ```
 
 ## Documentation
@@ -28,7 +28,7 @@ let redlock = Redlock::new(Config {
 })?;
 
 // Acquire the lock of the specified resource.
-let lock = redlock.lock("resource_name_to_lock",
+let lock = redlock.lock("resource_name",
                         time::Duration::from_millis(1000))?;
 // Release the lock of the resource when you are done.
 lock.unlock()?;
