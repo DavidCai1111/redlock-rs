@@ -86,12 +86,12 @@ impl Redlock {
         let quorum = (clients.len() as f64 / 2_f64).floor() as usize + 1;
 
         Ok(Redlock {
-               clients: clients,
+               clients,
                retry_count: config.retry_count,
                retry_delay: config.retry_delay,
                retry_jitter: config.retry_jitter,
                drift_factor: config.drift_factor,
-               quorum: quorum,
+               quorum,
            })
     }
 
@@ -113,7 +113,7 @@ impl Redlock {
                -> RedlockResult<(Lock)> {
         let mut attempts = 0;
         let drift = Duration::from_millis((self.drift_factor as f64 *
-                                           util::num_milliseconds(ttl) as f64)
+                                           util::num_milliseconds(&ttl) as f64)
                                                   .round() as
                                           u64 + 2);
 
@@ -134,8 +134,8 @@ impl Redlock {
 
             for client in &self.clients {
                 let request_result = match info {
-                    RequestInfo::Lock => lock(client, resource_name, &value, ttl),
-                    RequestInfo::Extend { .. } => extend(client, resource_name, &value, ttl),
+                    RequestInfo::Lock => lock(client, resource_name, &value, &ttl),
+                    RequestInfo::Extend { .. } => extend(client, resource_name, &value, &ttl),
                 };
 
                 let lock = Lock {
@@ -237,7 +237,7 @@ impl Redlock {
 fn lock(client: &redis::Client,
         resource_name: &str,
         value: &str,
-        ttl: Duration)
+        ttl: &Duration)
         -> RedlockResult<()> {
     LOCK.key(String::from(resource_name))
         .arg(String::from(value))
@@ -259,13 +259,14 @@ fn unlock(client: &redis::Client, resource_name: &str, value: &str) -> RedlockRe
 fn extend(client: &redis::Client,
           resource_name: &str,
           value: &str,
-          ttl: Duration)
+          ttl: &Duration)
           -> RedlockResult<()> {
     EXTEND
         .key(resource_name)
         .arg(value)
         .arg(util::num_milliseconds(ttl))
         .invoke::<()>(&client.get_connection()?)?;
+
     Ok(())
 }
 

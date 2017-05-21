@@ -8,7 +8,7 @@ pub fn get_random_string(len: usize) -> String {
         .collect::<String>()
 }
 
-pub fn num_milliseconds(duration: Duration) -> u64 {
+pub fn num_milliseconds(duration: &Duration) -> u64 {
     let secs_part = duration.as_secs() * 1000;
     let nano_part = duration.subsec_nanos() / 1000_000;
 
@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn test_num_milliseconds() {
-        assert_eq!(num_milliseconds(Duration::from_millis(5010)), 5010);
-        assert_eq!(num_milliseconds(Duration::from_millis(0)), 0);
+        assert_eq!(num_milliseconds(&Duration::from_millis(5010)), 5010);
+        assert_eq!(num_milliseconds(&Duration::from_millis(0)), 0);
     }
 }

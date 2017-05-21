@@ -7,12 +7,12 @@ A Rust [Redlock](https://redis.io/topics/distlock) implementation for distribute
 
 ```toml
 [dependencies]
-rust_redlock = "0.3.1"
+rust_redlock = "0.3.2"
 ```
 
 ## Documentation
 
-See: https://docs.rs/rust_redlock/0.3.1/rust_redlock
+See: https://docs.rs/rust_redlock/0.3.2/rust_redlock
 
 ## Usage
 
