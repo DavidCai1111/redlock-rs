@@ -153,7 +153,6 @@ impl Redlock {
                         if waitings > 0 {
                             continue;
                         }
-
                         // suceess: aquire the lock
                         if votes >= self.quorum && lock.expiration > SystemTime::now() {
                             return Ok(lock);
@@ -344,7 +343,18 @@ mod tests {
 
     #[test]
     fn test_unlock() {
-        let redlock = Redlock::new(Config::default()).unwrap();
+        let redlock = Redlock::new::<&str>(Config {
+                                               addrs: vec!["redis://127.0.0.1",
+                                                           "redis://127.0.0.1",
+                                                           "redis://127.0.0.1",
+                                                           "redis://127.0.0.1",
+                                                           "redis://127.0.0.1"],
+                                               retry_count: 10,
+                                               retry_delay: Duration::from_millis(400),
+                                               retry_jitter: 400,
+                                               drift_factor: 0.01,
+                                           })
+                .unwrap();
         let resource_name = "test_unlock";
         let lock = redlock
             .lock(resource_name, Duration::from_millis(2000))
@@ -361,7 +371,18 @@ mod tests {
 
     #[test]
     fn test_extend() {
-        let redlock = Redlock::new(Config::default()).unwrap();
+        let redlock = Redlock::new::<&str>(Config {
+                                               addrs: vec!["redis://127.0.0.1",
+                                                           "redis://127.0.0.1",
+                                                           "redis://127.0.0.1",
+                                                           "redis://127.0.0.1",
+                                                           "redis://127.0.0.1"],
+                                               retry_count: 10,
+                                               retry_delay: Duration::from_millis(400),
+                                               retry_jitter: 400,
+                                               drift_factor: 0.01,
+                                           })
+                .unwrap();
         let resource_name = "test_extend";
         let lock = redlock
             .lock(resource_name, Duration::from_millis(2000))

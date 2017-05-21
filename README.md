@@ -1,18 +1,18 @@
 # redlock-rs
 [![Build Status](https://travis-ci.org/DavidCai1993/redlock-rs.svg?branch=master)](https://travis-ci.org/DavidCai1993/redlock-rs)
 
-A rust [redlock](https://redis.io/topics/distlock) implementation for distributed, highly-available redis locks.
+A Rust [Redlock](https://redis.io/topics/distlock) implementation for distributed, highly-available redis locks.
 
 ## Installation
 
 ```toml
 [dependencies]
-rust_redlock = "0.3.0"
+rust_redlock = "0.3.1"
 ```
 
 ## Documentation
 
-See: https://docs.rs/rust_redlock/0.3.0/rust_redlock
+See: https://docs.rs/rust_redlock/0.3.1/rust_redlock
 
 ## Usage
 
