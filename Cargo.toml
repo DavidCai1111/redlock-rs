@@ -1,9 +1,9 @@
 [package]
 name = "rust_redlock"
 description = "A Rust Redlock implementation for distributed, highly-available redis locks"
-version = "0.3.2"
+version = "0.4.0"
 authors = ["David Cai <davidcai1993@yahoo.com>"]
-documentation = "https://docs.rs/rust_redlock/0.3.2/rust_redlock"
+documentation = "https://docs.rs/rust_redlock/0.4.0/rust_redlock"
 homepage = "https://github.com/DavidCai1993/redlock-rs"
 readme = "README.md"
 repository = "https://github.com/DavidCai1993/redlock-rs"

@@ -146,10 +146,13 @@ impl Redlock {
                 };
 
                 match request_result {
-                    Ok(_) => {
+                    Ok(success) => {
                         waitings -= 1;
-                        votes += 1;
+                        if !success {
+                            continue;
+                        }
 
+                        votes += 1;
                         if waitings > 0 {
                             continue;
                         }
@@ -196,10 +199,13 @@ impl Redlock {
 
             for client in &self.clients {
                 match unlock(client, resource_name, value) {
-                    Ok(_) => {
+                    Ok(success) => {
                         waitings -= 1;
-                        votes += 1;
+                        if !success {
+                            continue;
+                        }
 
+                        votes += 1;
                         if waitings > 0 {
                             continue;
                         }
@@ -238,36 +244,39 @@ fn lock(client: &redis::Client,
         resource_name: &str,
         value: &str,
         ttl: &Duration)
-        -> RedlockResult<()> {
-    LOCK.key(String::from(resource_name))
-        .arg(String::from(value))
-        .arg(util::num_milliseconds(ttl))
-        .invoke::<()>(&client.get_connection()?)?;
-
-    Ok(())
+        -> RedlockResult<bool> {
+    match LOCK.key(String::from(resource_name))
+              .arg(String::from(value))
+              .arg(util::num_milliseconds(ttl))
+              .invoke::<Option<()>>(&client.get_connection()?)? {
+        Some(_) => Ok(true),
+        _ => Ok(false),
+    }
 }
 
-fn unlock(client: &redis::Client, resource_name: &str, value: &str) -> RedlockResult<()> {
-    UNLOCK
-        .key(resource_name)
-        .arg(value)
-        .invoke::<()>(&client.get_connection()?)?;
-
-    Ok(())
+fn unlock(client: &redis::Client, resource_name: &str, value: &str) -> RedlockResult<bool> {
+    match UNLOCK
+              .key(resource_name)
+              .arg(value)
+              .invoke::<i32>(&client.get_connection()?)? {
+        1 => Ok(true),
+        _ => Ok(false),
+    }
 }
 
 fn extend(client: &redis::Client,
           resource_name: &str,
           value: &str,
           ttl: &Duration)
-          -> RedlockResult<()> {
-    EXTEND
-        .key(resource_name)
-        .arg(value)
-        .arg(util::num_milliseconds(ttl))
-        .invoke::<()>(&client.get_connection()?)?;
-
-    Ok(())
+          -> RedlockResult<bool> {
+    match EXTEND
+              .key(resource_name)
+              .arg(value)
+              .arg(util::num_milliseconds(ttl))
+              .invoke::<i32>(&client.get_connection()?)? {
+        1 => Ok(true),
+        _ => Ok(false),
+    }
 }
 
 #[cfg(test)]
@@ -275,11 +284,16 @@ mod tests {
     use super::*;
     use redis::Commands;
 
-    fn get_local_redis_conn() -> redis::Connection {
-        redis::Client::open("redis://127.0.0.1")
-            .unwrap()
-            .get_connection()
-            .unwrap()
+    lazy_static! {
+        static ref REDLOCK: Redlock = Redlock::new::<&str>(Config {
+            addrs: vec!["redis://127.0.0.1"],
+            retry_count: 10,
+            retry_delay: Duration::from_millis(400),
+            retry_jitter: 400,
+            drift_factor: 0.01,
+        }).unwrap();
+
+        static ref REDIS_CLI: redis::Client = redis::Client::open("redis://127.0.0.1").unwrap();
     }
 
     #[test]
@@ -288,6 +302,8 @@ mod tests {
         assert_eq!(default_config.addrs, vec!["redis://127.0.0.1"]);
         assert_eq!(default_config.retry_count, 10);
         assert_eq!(default_config.retry_delay, Duration::from_millis(400));
+        assert_eq!(default_config.retry_jitter, 400);
+        assert_eq!(default_config.drift_factor, 0.01);
     }
 
     #[test]
@@ -313,83 +329,69 @@ mod tests {
 
     #[test]
     fn test_lock() {
-        let redlock = Redlock::new(Config::default()).unwrap();
         let resource_name = "test_lock";
-        let lock = redlock
-            .lock(resource_name, Duration::from_millis(2000))
-            .unwrap();
-        assert!(lock.expiration < SystemTime::now().add(Duration::from_millis(2000)));
+        let one_second = Duration::from_millis(1000);
+
+        let lock = REDLOCK.lock(resource_name, one_second).unwrap();
+        assert!(lock.expiration < SystemTime::now().add(one_second));
     }
 
     #[test]
-    fn test_lock_five() {
-        let redlock = Redlock::new::<&str>(Config {
-                                               addrs: vec!["redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1"],
-                                               retry_count: 10,
-                                               retry_delay: Duration::from_millis(400),
-                                               retry_jitter: 400,
-                                               drift_factor: 0.01,
-                                           })
-                .unwrap();
-        let resource_name = "test_lock_five";
-        let lock = redlock
-            .lock(resource_name, Duration::from_millis(2000))
-            .unwrap();
-        assert!(lock.expiration < SystemTime::now().add(Duration::from_millis(2000)));
+    fn test_lock_twice() {
+        let resource_name = "test_lock_twice";
+        let one_second = Duration::from_millis(1000);
+        let start = SystemTime::now();
+        let lock = REDLOCK.lock(resource_name, one_second).unwrap();
+
+        assert!(lock.expiration > start);
+        assert!(lock.expiration < start.add(one_second));
+        assert!(REDLOCK.lock(resource_name, one_second).is_err());
+
+        thread::sleep(one_second);
+
+        assert!(REDLOCK.lock(resource_name, one_second).is_ok());
     }
 
     #[test]
     fn test_unlock() {
-        let redlock = Redlock::new::<&str>(Config {
-                                               addrs: vec!["redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1"],
-                                               retry_count: 10,
-                                               retry_delay: Duration::from_millis(400),
-                                               retry_jitter: 400,
-                                               drift_factor: 0.01,
-                                           })
-                .unwrap();
         let resource_name = "test_unlock";
-        let lock = redlock
+        let lock = REDLOCK
             .lock(resource_name, Duration::from_millis(2000))
             .unwrap();
 
-        let conn = get_local_redis_conn();
-        let value: String = conn.get(resource_name).unwrap();
+        let value: String = REDIS_CLI
+            .get_connection()
+            .unwrap()
+            .get(resource_name)
+            .unwrap();
         assert_eq!(value.len(), 32);
 
         lock.unlock().unwrap();
-        let res: Option<String> = conn.get(resource_name).unwrap();
+        let res: Option<String> = REDIS_CLI
+            .get_connection()
+            .unwrap()
+            .get(resource_name)
+            .unwrap();
         assert!(res.is_none());
     }
 
     #[test]
     fn test_extend() {
-        let redlock = Redlock::new::<&str>(Config {
-                                               addrs: vec!["redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1",
-                                                           "redis://127.0.0.1"],
-                                               retry_count: 10,
-                                               retry_delay: Duration::from_millis(400),
-                                               retry_jitter: 400,
-                                               drift_factor: 0.01,
-                                           })
-                .unwrap();
         let resource_name = "test_extend";
-        let lock = redlock
+        let lock = REDLOCK
             .lock(resource_name, Duration::from_millis(2000))
             .unwrap();
         let lock_extended = lock.extend(Duration::from_millis(2000)).unwrap();
 
         assert!(lock_extended.expiration < SystemTime::now().add(Duration::from_millis(2000)));
+    }
+
+    #[test]
+    fn test_extend_expired_resource() {
+        let one_second = Duration::from_millis(1000);
+        let resource_name = "test_extend_expired_resource";
+        let lock = REDLOCK.lock(resource_name, one_second).unwrap();
+        thread::sleep(one_second * 2);
+        assert!(lock.extend(one_second).is_err());
     }
 }
