@@ -46,7 +46,7 @@ pub struct Config<T>
     pub addrs: Vec<T>,
     pub retry_count: u32,
     pub retry_delay: Duration,
-    pub retry_jitter: u32,
+    pub retry_jitter: u64,
     pub drift_factor: f32,
 }
 
@@ -55,7 +55,7 @@ impl Default for Config<&'static str> {
         Config {
             addrs: vec!["redis://127.0.0.1"],
             retry_count: 10,
-            retry_delay: Duration::from_millis(400),
+            retry_delay: Duration::from_millis(401),
             retry_jitter: 400,
             drift_factor: 0.01,
         }
@@ -67,7 +67,7 @@ pub struct Redlock {
     clients: Vec<redis::Client>,
     retry_count: u32,
     retry_delay: Duration,
-    retry_jitter: u32,
+    retry_jitter: u64,
     drift_factor: f32,
     quorum: usize,
 }
@@ -77,6 +77,9 @@ impl Redlock {
     pub fn new<T: redis::IntoConnectionInfo>(config: Config<T>) -> RedlockResult<Redlock> {
         if config.addrs.is_empty() {
             return Err(RedlockError::NoServerError);
+        }
+        if Duration::from_millis(config.retry_jitter) >= config.retry_delay {
+            return Err(RedlockError::DelayJitterError);
         }
         let mut clients = Vec::with_capacity(config.addrs.len());
         for addr in config.addrs {
@@ -231,11 +234,11 @@ impl Redlock {
     }
 
     fn get_retry_timeout(&self) -> Duration {
-        let jitter = self.retry_jitter as i32 * thread_rng().gen_range(-1, 1);
-        if jitter >= 0 {
-            self.retry_delay.add(Duration::from_millis(jitter as u64))
+        let jitter = thread_rng().gen_range(-1, 1);
+        if jitter == -1 {
+            self.retry_delay.sub(Duration::from_millis(self.retry_jitter))
         } else {
-            self.retry_delay.sub(Duration::from_millis(-jitter as u64))
+            self.retry_delay.add(Duration::from_millis(self.retry_jitter))
         }
     }
 }
@@ -288,7 +291,7 @@ mod tests {
         static ref REDLOCK: Redlock = Redlock::new::<&str>(Config {
             addrs: vec!["redis://127.0.0.1"],
             retry_count: 10,
-            retry_delay: Duration::from_millis(400),
+            retry_delay: Duration::from_millis(401),
             retry_jitter: 400,
             drift_factor: 0.01,
         }).unwrap();
@@ -301,7 +304,7 @@ mod tests {
         let default_config = Config::default();
         assert_eq!(default_config.addrs, vec!["redis://127.0.0.1"]);
         assert_eq!(default_config.retry_count, 10);
-        assert_eq!(default_config.retry_delay, Duration::from_millis(400));
+        assert_eq!(default_config.retry_delay, Duration::from_millis(401));
         assert_eq!(default_config.retry_jitter, 400);
         assert_eq!(default_config.drift_factor, 0.01);
     }
@@ -312,7 +315,7 @@ mod tests {
         Redlock::new::<&str>(Config {
                                  addrs: vec![],
                                  retry_count: 10,
-                                 retry_delay: Duration::from_millis(400),
+                                 retry_delay: Duration::from_millis(401),
                                  retry_jitter: 400,
                                  drift_factor: 0.01,
                              })
@@ -324,7 +327,7 @@ mod tests {
         let redlock = Redlock::new(Config::default()).unwrap();
         assert_eq!(redlock.clients.len(), 1);
         assert_eq!(redlock.retry_count, 10);
-        assert_eq!(redlock.retry_delay, Duration::from_millis(400));
+        assert_eq!(redlock.retry_delay, Duration::from_millis(401));
     }
 
     #[test]
