@@ -9,7 +9,7 @@ fn example() -> RedlockResult<()> {
                                                "redis2.example.com",
                                                "redis3.example.com"],
                                    retry_count: 10,
-                                   retry_delay: time::Duration::from_millis(400),
+                                   retry_delay: time::Duration::from_millis(401),
                                    retry_jitter: 400,
                                    drift_factor: 0.01,
                                })?;
