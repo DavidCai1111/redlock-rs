@@ -118,6 +118,10 @@ impl Redlock {
                                           u64 + 2);
 
         'attempts: while attempts < self.retry_count {
+            if attempts > 0 {
+                thread::sleep(self.get_retry_timeout());
+            }
+
             attempts += 1;
 
             // Start time of this attempt
@@ -163,7 +167,6 @@ impl Redlock {
 
                         // fail: releases all aquired locks and retry
                         lock.unlock().is_ok(); // Just ingore the result
-                        thread::sleep(self.get_retry_timeout());
                         continue 'attempts;
                     }
                     Err(_) => {
@@ -172,7 +175,6 @@ impl Redlock {
                         // the timeout
                         if errors > self.quorum {
                             lock.unlock().is_ok(); // Just ingore the result
-                            thread::sleep(self.get_retry_timeout());
                             continue 'attempts;
                         }
                     }
@@ -191,6 +193,10 @@ impl Redlock {
         let mut attempts = 0;
 
         'attempts: while attempts < self.retry_count {
+            if attempts > 0 {
+                thread::sleep(self.get_retry_timeout());
+            }
+
             attempts += 1;
 
             let mut waitings = self.clients.len();
@@ -218,7 +224,6 @@ impl Redlock {
                         // This attempt is doomed to fail, will retry after
                         // the timeout
                         if errors >= self.quorum {
-                            thread::sleep(self.get_retry_timeout());
                             continue 'attempts;
                         }
                     }
@@ -345,9 +350,6 @@ mod tests {
 
         assert!(lock.expiration > start);
         assert!(lock.expiration < start.add(one_second));
-        assert!(REDLOCK.lock(resource_name, one_second).is_err());
-
-        thread::sleep(one_second);
 
         assert!(REDLOCK.lock(resource_name, one_second).is_ok());
     }
